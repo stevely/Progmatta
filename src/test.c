@@ -10,6 +10,7 @@
 #include "debruijn.h"
 #include "depanalyzer.h"
 #include "typechecker.h"
+#include "prettyprint.h"
 
 #define TEST_LEX (1 << 0)
 #define TEST_TOK (1 << 1)
@@ -25,6 +26,7 @@ int main( int argc, char **argv ) {
     lex_list *l;
     token *tree;
     program *prog;
+    typed_token *typed_tree;
     if( argc == 1 ) {
         printf("Usage: %s [-ltpdiac] file\n", argv[0]);
         return 0;
@@ -127,11 +129,15 @@ int main( int argc, char **argv ) {
         printf("\n");
     }
     /* Step 7: Perform type inference */
+    typed_tree = infer_types(prog);
     if( options & TEST_TCH ) {
         printf("\n###Performing type inference...\n\n");
-        test_type_inference(prog);
+        printtypedtree(typed_tree);
         printf("\n");
     }
+    /* Step 8: Pretty print our tree */
+    printf("\n###Performing pretty printing of tree...\n\n");
+    pretty_print_tree(typed_tree);
     free_program(prog);
     return 0;
 }
