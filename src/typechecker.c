@@ -7,8 +7,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include "gc.h"
-#include "parsecomb.h"
-#include "depanalyzer.h"
+#include "typechecker.h"
 
 /*
 *** Id.hs
@@ -18,7 +17,6 @@ enumId  :: Int -> Id
 enumId n = "v" ++ show n
 */
 
-typedef char id;
 static unsigned int curr_id = 0;
 
 static id * enum_id() {
@@ -37,11 +35,6 @@ static int id_eq( id *i1, id *i2 ) {
 data Kind  = Star | Kfun Kind Kind
              deriving Eq
 */
-
-typedef struct kind {
-    struct kind *l;
-    struct kind *r;
-} kind;
 
 static int kind_eq( kind *k1, kind *k2 ) {
     /* Can't compare nulls */
@@ -101,39 +94,6 @@ data Tyvar = Tyvar Id Kind
 data Tycon = Tycon Id Kind
              deriving Eq
 */
-
-typedef struct type type;
-
-typedef struct typevar {
-    id *i;
-    kind *k;
-} typevar;
-
-typedef struct typecon {
-    id *i;
-    kind *k;
-} typecon;
-
-typedef struct typeap {
-    type *l;
-    type *r;
-} typeap;
-
-struct type {
-    enum {
-        type_var,
-        type_con,
-        type_ap,
-        type_gen
-    } type;
-    union {
-        typevar *tv;
-        typecon *tc;
-        typeap  *ta;
-        int tg;
-    } val;
-    struct type *next;
-};
 
 static int type_eq( type *t1, type *t2 );
 
@@ -343,16 +303,18 @@ tTuple2  = TCon (Tycon "(,)" (Kfun Star (Kfun Star Star)))
 */
 
 static type * tList;
+static type * tMaybe;
 static type * tArrow;
 static type * tTuple2;
 
-static void generate_types() {
+static void generate_prelude_types() {
     tUnit  = tycon("()",    kstar());
     tChar  = tycon("Char",  kstar());
     tInt   = tycon("Int",   kstar());
     tFloat = tycon("Float", kstar());
     tString = tycon("String", kstar());
     tList = tycon("[]", kfun( kstar(), kstar()));
+    tMaybe = tycon("Maybe", kfun( kstar(), kstar()));
     tArrow = tycon("(->)", kfun( kstar(), kfun( kstar(), kstar())));
     tTuple2 = tycon("(,)", kfun( kstar(), kfun( kstar(), kstar())));
 }
@@ -914,24 +876,6 @@ data Pred   = IsIn Id [Type]
               deriving Eq
 */
 
-typedef struct pred {
-    id *i;
-    type *t;
-    struct pred *next;
-} pred;
-
-typedef struct qual {
-    enum {
-        qual_type,
-        qual_pred
-    } type;
-    pred *p;
-    union {
-        type *t;
-        pred *p;
-    } val;
-} qual;
-
 static pred * dup_pred( pred *p ) {
     pred *result;
     result = (pred*)GC_MALLOC(sizeof(pred));
@@ -1001,7 +945,7 @@ static int qual_eq( qual *q1, qual *q2 ) {
 
 static void print_pred_list( pred *p ) {
     while( p ) {
-        printf("%s: ", p->i);
+        printf("%s => ", p->i);
         print_type(p->t);
         if( p->next ) {
             printf(", ");
@@ -1157,7 +1101,9 @@ static typevar_list * type_vars_pred( pred *p ) {
     }
     else {
         result = type_vars(p->t);
-        result->next = type_vars_pred(p->next);
+        if( result ) {
+            result->next = type_vars_pred(p->next);
+        }
         return result;
     }
 }
@@ -1642,11 +1588,6 @@ data Scheme = Forall [Kind] (Qual Type)
               deriving Eq
 */
 
-typedef struct kind_list {
-    kind *k;
-    struct kind_list *next;
-} kind_list;
-
 static kind_list * new_kind_list( kind *k ) {
     kind_list *result;
     result = (kind_list*)GC_MALLOC(sizeof(kind_list));
@@ -1684,12 +1625,6 @@ static void print_kind_list( kind_list *ks ) {
     printf("]");
 }
 
-/* Qual should always contain a type, but we can't enfore that */
-typedef struct scheme {
-    kind_list *ks;
-    qual *q;
-} scheme;
-
 static scheme * forall( kind_list *ks, qual *q ) {
     scheme *result;
     result = (scheme*)GC_MALLOC(sizeof(scheme));
@@ -1705,7 +1640,7 @@ static int scheme_eq( scheme *sc1, scheme *sc2 ) {
     return kind_list_eq(sc1->ks, sc2->ks) && qual_eq(sc1->q, sc2->q);
 }
 
-static void print_scheme( scheme *sc ) {
+void print_scheme( scheme *sc ) {
     printf("forall ");
     print_kind_list(sc->ks);
     printf(". ");
@@ -1799,12 +1734,6 @@ static scheme * to_scheme( type *t ) {
 data Assump = Id :>: Scheme
 */
 
-typedef struct assump {
-    id *i;
-    scheme *s;
-    struct assump *next;
-} assump;
-
 static assump * new_assump( id *i, scheme *s ) {
     assump *result;
     result = (assump*)GC_MALLOC(sizeof(assump));
@@ -1850,6 +1779,26 @@ static void print_assumps( assump *as ) {
     }
 }
 
+/* TODO: Come up with better solution for this.
+ * Here's a list of assumptions for data constructors. In the future this
+ * needs to be part of the program proper.
+ */
+static assump *constructors = NULL;
+
+/*
+ * Given an ID, find the type scheme for the corresponding data constructor,
+ * if it exists.
+ */
+static scheme * find_constructor( id *i ) {
+    assump *a;
+    for( a = constructors; a; a = a->next ) {
+        if( id_eq(i, a->i) ) {
+            return a->s;
+        }
+    }
+    return NULL;
+}
+
 /*
 instance Types Assump where
   apply s (i :>: sc) = i :>: (apply s sc)
@@ -1877,7 +1826,7 @@ find i []             = fail ("unbound identifier: " ++ i)
 find i ((i':>:sc):as) = if i==i' then return sc else find i as
 */
 
-static scheme * find( id *i, assump *a ) {
+scheme * find( id *i, assump *a ) {
     if( !a ) {
         fprintf(stderr, "ERROR: Unbound identifier: %s\n", i);
         return NULL;
@@ -2152,7 +2101,9 @@ static pred_assump_type * ti_pats( token *tok );
 
 static pred_assump_type * ti_pat( token *tok ) {
     pred_type *pt;
+    pred_assump_type *pat;
     type *t;
+    qual *q;
     if( is_literal(tok) ) {
         pt = ti_lit(tok);
         return new_pred_assump_type(pt->p, NULL, pt->t);
@@ -2164,6 +2115,14 @@ static pred_assump_type * ti_pat( token *tok ) {
         if( tok->value.s[0] == '_' && !tok->value.s[1] ) {
             return new_pred_assump_type(NULL, NULL, new_tvar(kstar()));
         }
+        /* Type constructor */
+        else if( tok->value.s[0] >= 'A' && tok->value.s[0] <= 'Z' ) {
+            pat = ti_pats(tok->next);
+            t = new_tvar(kstar());
+            q = fresh_inst(find_constructor(tok->value.s));
+            unify(q->val.t, fold_fn(t, pat->t));
+            return new_pred_assump_type(pred_join(pat->p, q->p), pat->a, t);
+        }
         /* Variable [a-z] */
         else if( tok->value.s[0] >= 'a' && tok->value.s[0] <= 'z' ) {
             t = new_tvar(kstar());
@@ -2171,8 +2130,6 @@ static pred_assump_type * ti_pat( token *tok ) {
                                         new_assump(tok->value.s, to_scheme(t)),
                                         t);
         }
-        /* Type constructor */
-        /* TODO */
         return NULL;
     }
     else {
@@ -2341,15 +2298,32 @@ static pred * ti_branches( class_env *ce, assump *as, token *tok,
     return result;
 }
 
+typedef struct pred_assump {
+    pred *p;
+    assump *a;
+} pred_assump;
+
+static pred_assump * new_pred_assump( pred *p, assump *a ) {
+    pred_assump *result;
+    result = (pred_assump*)GC_MALLOC(sizeof(pred_assump));
+    result->p = p;
+    result->a = a;
+    return result;
+}
+
+/* Forward reference */
+static pred_assump * ti_impls( class_env *ce, assump *as, token *tok );
+
 static pred_type * ti_expr3( class_env *ce, assump *as, token *tok ) {
     pred_type *pt1;
+    pred_assump *pa;
     qual *q;
     type *t;
     if( tok->type == tok_ident ) {
         /* Const */
         if( tok->value.s[0] >= 'A' && tok->value.s[0] <= 'Z' ) {
-            /* TODO */
-            return NULL;
+            q = fresh_inst(find_constructor(tok->value.s));
+            pt1 = new_pred_type(q->p, q->val.t);
         }
         /* Val */
         else {
@@ -2364,8 +2338,9 @@ static pred_type * ti_expr3( class_env *ce, assump *as, token *tok ) {
         pt1 = ti_lit(tok);
     }
     else if( tok->type == tok_letexpr ) {
-        /* TODO */
-        pt1 = NULL;
+        pa = ti_impls(ce, as, tok->lhs);
+        pt1 = ti_expr(ce, assump_join(as, pa->a), tok->rhs);
+        pt1->p = pred_join(pt1->p, pa->p);
     }
     else if( tok->type == tok_lamexpr ) {
         pt1 = ti_alt(ce, as, tok);
@@ -2654,7 +2629,7 @@ static pred * ti_expl( class_env *ce, assump *as, scheme *sc, token *tok ) {
         return NULL;
     }
     q = fresh_inst(sc);
-    ps = ti_alts(ce, as, tok->lhs, q->val.t);
+    ps = ti_alts(ce, as, tok, q->val.t);
     /* let */
     q2 = apply_pred(curr_subst, q->p);
     t = apply(curr_subst, q->val.t);
@@ -2759,19 +2734,6 @@ static typevar_list * partition_tyvar_list( typevar_list *u ) {
         u = u->next;
     }
     return i;
-}
-
-typedef struct pred_assump {
-    pred *p;
-    assump *a;
-} pred_assump;
-
-static pred_assump * new_pred_assump( pred *p, assump *a ) {
-    pred_assump *result;
-    result = (pred_assump*)GC_MALLOC(sizeof(pred_assump));
-    result->p = p;
-    result->a = a;
-    return result;
 }
 
 static pred_assump * ti_impls( class_env *ce, assump *as, token *tok ) {
@@ -3014,18 +2976,153 @@ static assump * prelude_functions() {
     a = assump_join(a,
         new_assump("dec", forall(NULL, qualified_type(NULL,
         tyap_fn(tInt, tInt)))));
+    a = assump_join(a,
+        new_assump("plus", forall(new_kind_list(kstar()),
+        qualified_type(is_in("Num", tygen(0)),
+        tyap_fn(tygen(0), tyap_fn(tygen(0), tygen(0)))))));
     return a;
+}
+
+static void populate_constructs() {
+    constructors = new_assump("Cons", forall(new_kind_list(kstar()),
+        qualified_type(NULL,
+        tyap_fn(tygen(0), tyap_fn(tyap(tList, tygen(0)), tyap(tList, tygen(0)
+        ))))));
+    constructors = assump_join(constructors,
+        new_assump("Empty", forall(new_kind_list(kstar()),
+        qualified_type(NULL, tyap(tList, tygen(0))))));
+    constructors = assump_join(constructors,
+        new_assump("Just", forall(new_kind_list(kstar()),
+        qualified_type(NULL, tyap(tMaybe, tygen(0))))));
 }
 
 void test_type_inference( program *prog ) {
     class_env *ce;
     assump *as, *result;
-    generate_types();
+    generate_prelude_types();
     ce = example_insts(prelude_classes());
     as = prelude_functions();
+    populate_constructs();
     result = ti_program(ce, as, prog);
     print_assumps(result);
+    print_assumps(constructors);
     print_substs(curr_subst);
+}
+
+assump * perform_type_inference( program *prog ) {
+    class_env *ce;
+    assump *as;
+    generate_prelude_types();
+    ce = example_insts(prelude_classes());
+    as = prelude_functions();
+    populate_constructs();
+    return ti_program(ce, as, prog);
+}
+
+static typed_token * new_typed_token() {
+    typed_token *result;
+    result = (typed_token*)malloc(sizeof(typed_token));
+    /* We're okay with garbage values so long as they're not pointers. */
+    result->lhs     = NULL;
+    result->rhs     = NULL;
+    result->next    = NULL;
+    result->value.s = NULL;
+    result->scheme  = NULL;
+    return result;
+}
+
+void free_typed_token( typed_token *tok ) {
+    if( tok ) {
+        free_typed_token(tok->lhs);
+        free_typed_token(tok->rhs);
+        free_typed_token(tok->next);
+        free(tok);
+    }
+}
+
+static typed_token * promote_token( token *tok ) {
+    if( !tok ) {
+        return NULL;
+    }
+    typed_token *result;
+    result = new_typed_token();
+    result->type        = tok->type;
+    result->value.s     = tok->value.s;
+    result->index       = tok->index;
+    result->line_number = tok->line_number;
+    result->scheme      = NULL; /* Don't care */
+    result->lhs         = promote_token(tok->lhs);
+    result->rhs         = promote_token(tok->rhs);
+    result->next        = promote_token(tok->next);
+    return result;
+}
+
+static typed_token * add_type_to_token( token *tok, scheme *s ) {
+    typed_token *result;
+    result = new_typed_token();
+    result->type = tok->type;
+    /* We know this is a bind, so we can grab the name directly */
+    result->value.s = tok->value.s;
+    result->index = tok->index;
+    result->line_number = tok->line_number;
+    result->scheme = s;
+    result->lhs = promote_token(tok->lhs);
+    result->rhs = promote_token(tok->rhs);
+    /* Next is taken care of in assign_types() */
+    return result;
+}
+
+static typed_token * assign_types( token *tok, assump *as ) {
+    token *bgs, *bs;
+    scheme *s;
+    typed_token *result, *curr;
+    if( !tok ) {
+        return NULL;
+    }
+    /* Create a dummy head token to simplify appending */
+    result = curr = new_typed_token();
+    /* Should go bindgroup->bind, so we iterate over the groups and the binds
+       to assign the types. */
+    bgs = tok;
+    while( bgs && bgs->type == tok_Bindgroup ) {
+        bs = bgs->lhs;
+        while( bs && bs->type == tok_Bind ) {
+            s = find(bs->value.s, as);
+            if( s ) {
+                curr->next = add_type_to_token(bs, s);
+                curr = curr->next;
+            }
+            bs = bs->next;
+        }
+        bgs = bgs->next;
+    }
+    /* Remove dummy head */
+    curr = result->next;
+    free(result);
+    return curr;
+}
+
+static typed_token * reconstruct_types( program *prog, assump *as ) {
+    typed_token *result, *curr;
+    result = assign_types(prog->expl, as);
+    curr = result;
+    if( curr ) {
+        while( curr->next ) {
+            curr = curr->next;
+        }
+        curr->next = assign_types(prog->impl, as);
+    }
+    else {
+        result = assign_types(prog->impl, as);
+    }
+    return result;
+}
+
+typed_token * infer_types( program *prog ) {
+    assump *as;
+    GC_INIT();
+    as = perform_type_inference(prog);
+    return reconstruct_types(prog, as);
 }
 
 /*
@@ -3040,5 +3137,101 @@ tiProgram' ce as bgs = runTI $
      let rs     = reduce ce (apply s ps)
      s'        <- defaultSubst ce [] rs
      return (apply (s'@@s) as')
+    int i;
 
 */
+
+void printtypedtok( typed_token *tok ) {
+    /* Degenerate case */
+    if( !tok ) {
+        printf("<null>");
+        return;
+    }
+    switch(tok->type) {
+    /* Vanilla types */
+    case tok_Assign: printf("Assign"); break;
+    case tok_Assigns: printf("Assigns"); break;
+    case tok_Bindgroup: printf("Bindgroup"); break;
+    case tok_Case: printf("Case"); break;
+    case tok_Cases: printf("Cases"); break;
+    case tok_Export: printf("Export"); break;
+    case tok_Identlist: printf("Identlist"); break;
+    case tok_Import: printf("Import"); break;
+    case tok_Kernel: printf("Kernel"); break;
+    case tok_Moreports: printf("Moreports"); break;
+    case tok_PortStmt: printf("PortStmt"); break;
+    case tok_Typesig: printf("Typesig"); break;
+    case tok_arrow: printf("arrow"); break;
+    case tok_brackets: printf("brackets"); break;
+    case tok_case: printf("case"); break;
+    case tok_caseexpr: printf("caseexpr"); break;
+    case tok_dubcolon: printf("dubcolon"); break;
+    case tok_eq: printf("eq"); break;
+    case tok_export: printf("export"); break;
+    case tok_funtype: printf("funtype"); break;
+    case tok_import: printf("import"); break;
+    case tok_in: printf("in"); break;
+    case tok_kernel: printf("kernel"); break;
+    case tok_lambda: printf("lambda"); break;
+    case tok_lamexpr: printf("lamexpr"); break;
+    case tok_lbracket: printf("lbracket"); break;
+    case tok_let: printf("let"); break;
+    case tok_letexpr: printf("letexpr"); break;
+    case tok_lparen: printf("lparen"); break;
+    case tok_newline: printf("newline"); break;
+    case tok_nothing: printf("nothing"); break;
+    case tok_of: printf("of"); break;
+    case tok_otherwise: printf("otherwise"); break;
+    case tok_parens: printf("parens"); break;
+    case tok_period: printf("period"); break;
+    case tok_rbracket: printf("rbracket"); break;
+    case tok_rparen: printf("rparen"); break;
+    case tok_vals: printf("val"); break;
+    /* Types holding something */
+    case tok_Bind:
+        printf("Bind: %s", tok->value.s);
+        if( tok->scheme ) {
+            printf(" ");
+            print_scheme(tok->scheme);
+        }
+        break;
+    case tok_ident:
+        printf("ident: %s", tok->value.s);
+        if( tok->index != 0 ) {
+            printf(" (%d)", tok->index);
+        }
+        break;
+    case tok_int:
+        printf("int: %ld", tok->value.i);
+        break;
+    case tok_float:
+        printf("float: %f", tok->value.f);
+        break;
+    case tok_string:
+        printf("string: %s", tok->value.s);
+        break;
+    /* Badness has happened */
+    default: printf("<<Unknown>>"); break;
+    }
+}
+
+void printtypedtree( typed_token *tok ) {
+    if( !tok ) {
+        return;
+    }
+    printtypedtok(tok);
+    if( tok->lhs ) {
+        printf(" (");
+        printtypedtree(tok->lhs);
+        printf(")");
+    }
+    if( tok->rhs ) {
+        printf(" (");
+        printtypedtree(tok->rhs);
+        printf(")");
+    }
+    if( tok->next ) {
+        printf(", ");
+        printtypedtree(tok->next);
+    }
+}
