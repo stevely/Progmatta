@@ -14,7 +14,7 @@ FCL_T_S= test.c
 
 # Compiler sources
 FCL_S= lexer.c tokenizer.c parsecomb.c debruijn.c depanalyzer.c typechecker.c \
- prettyprint.c
+ prettyprint.c transform.c
 
 # Helper function
 getobjs= $(addprefix $(BUILD)/,$(patsubst %.c,%.o,$(1)))

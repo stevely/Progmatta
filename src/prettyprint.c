@@ -7,6 +7,8 @@
 #include <string.h>
 #include "prettyprint.h"
 
+static char tyvars[] = "abcdefghijklmnopqrstuvwxyz";
+
 static int is_func( type *t ) {
     if( t->type != type_con ) {
         return 0;
@@ -30,7 +32,12 @@ void pretty_print_type( type *t ) {
         printf("%s", t->val.tv->i);
         break;
     case type_gen:
-        printf("a%d", t->val.tg);
+        if( t->val.tg >= 26 ) {
+            printf("v%d", t->val.tg);
+        }
+        else {
+            printf("%c", tyvars[t->val.tg]);
+        }
         break;
     case type_ap:
         /* Special case for type application */

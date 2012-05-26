@@ -11,6 +11,7 @@
 #include "depanalyzer.h"
 #include "typechecker.h"
 #include "prettyprint.h"
+#include "transform.h"
 
 #define TEST_LEX (1 << 0)
 #define TEST_TOK (1 << 1)
@@ -135,8 +136,14 @@ int main( int argc, char **argv ) {
         printtypedtree(typed_tree);
         printf("\n");
     }
-    /* Step 8: Pretty print our tree */
+    /* PHASE 2: Perform transformations on tree in preparation of code gen */
+    /* Step 1: Print out initial tree */
+    printf("\n###   PHASE TWO OF COMPILATION   ###");
     printf("\n###Performing pretty printing of tree...\n\n");
+    pretty_print_tree(typed_tree);
+    /* Step 2: Perform transformations */
+    typed_tree = transform_tree(typed_tree);
+    printf("\n###Performing tree transformation...\n\n");
     pretty_print_tree(typed_tree);
     free_program(prog);
     return 0;

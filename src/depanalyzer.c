@@ -126,7 +126,7 @@ program * generate_initial_bg( token *tree ) {
                 t2 = prog->expl->lhs;
                 while( t2 ) {
                     if( strcmp(t2->lhs->value.s, tree->lhs->value.s) == 0 ) {
-                        printf("ERROR! Declaration for \"%s\" found preceding "
+                        printf("ERROR: Declaration for \"%s\" found preceding "
                             "type signature!\n", t2->lhs->value.s);
                         printf(" Line number %d (originally found on line %d.\n",
                             tree->line_number, t2->line_number);
@@ -151,7 +151,7 @@ program * generate_initial_bg( token *tree ) {
                     t2->next->value.s = tree->lhs->value.s;
                 }
                 else {
-                    printf("ERROR! Hit an impossible NULL!\n");
+                    printf("ERROR: Hit an impossible NULL!\n");
                 }
             }
         }
@@ -176,7 +176,7 @@ program * generate_initial_bg( token *tree ) {
             }
         }
         else {
-            printf("ERROR! Invalid top-level declaration on line number %d!\n",
+            printf("ERROR: Invalid top-level declaration on line number %d!\n",
                 tree->line_number);
         }
         /* Short for "generate_initial_bindgroups end", if you were wondering */
