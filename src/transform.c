@@ -27,6 +27,7 @@ static typed_token * strip_typesigs2( typed_token *tok ) {
     return tok;
 }
 
+/* Since we already know the types of everything, we don't need the typesigs */
 static typed_token * strip_typesigs( typed_token *tok ) {
     typed_token *t;
     t = tok;

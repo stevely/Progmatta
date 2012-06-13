@@ -4,6 +4,7 @@ CC= clang
 ANALYZE= clang --analyze
 WARNS= -W -Werror -Wall
 CFLAGS= -g $(WARNS)
+LFLAGS= -faddress-sanitizer -fno-omit-frame-pointer
 LIBS= -lgc
 SRC= src
 BUILD= build
@@ -13,7 +14,10 @@ FCL_T= compiler-test
 FCL_T_S= test.c
 
 # Compiler sources
-FCL_S= lexer.c tokenizer.c parsecomb.c debruijn.c depanalyzer.c typechecker.c \
+FCL_S= lexer.c tokenizer.c parsecomb.c debruijn.c bindgroup.c depanalyzer2.c \
+ typechecker.c prettyprint.c transform.c
+
+old_FCL_S= lexer.c tokenizer.c parsecomb.c debruijn.c depanalyzer.c typechecker.c \
  prettyprint.c transform.c
 
 # Helper function
@@ -32,7 +36,7 @@ $(BUILD):
 
 $(BUILD)/%.o: $(SRC)/%.c | $(BUILD)
 	$(ANALYZE) $(WARNS) $<
-	$(CC) $(CFLAGS) -I $(SRC) -c -o $@ $<
+	$(CC) $(CFLAGS) $(LFLAGS) -I $(SRC) -c -o $@ $<
 
 clean:
 	$(if $(ARTIFACTS), rm $(ARTIFACTS))

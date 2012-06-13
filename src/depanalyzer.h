@@ -11,13 +11,14 @@
 typedef struct {
     token *expl;
     token *impl;
+    token *tree;
     token *imports;
     token *exports;
 } program;
 
 typedef struct dep_list_item {
-    struct dep_list_item *next;
     char *ident;
+    struct dep_list_item *next;
 } dep_list_item;
 
 typedef struct dep_list {

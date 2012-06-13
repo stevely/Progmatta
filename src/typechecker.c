@@ -2311,8 +2311,9 @@ static pred_assump * new_pred_assump( pred *p, assump *a ) {
     return result;
 }
 
-/* Forward reference */
+/* Forward references */
 static pred_assump * ti_impls( class_env *ce, assump *as, token *tok );
+static pred_assump * ti_bindgroups( class_env *ce, assump *as, token *tree );
 
 static pred_type * ti_expr3( class_env *ce, assump *as, token *tok ) {
     pred_type *pt1;
@@ -2338,7 +2339,7 @@ static pred_type * ti_expr3( class_env *ce, assump *as, token *tok ) {
         pt1 = ti_lit(tok);
     }
     else if( tok->type == tok_letexpr ) {
-        pa = ti_impls(ce, as, tok->lhs);
+        pa = ti_bindgroups(ce, as, tok->lhs);
         pt1 = ti_expr(ce, assump_join(as, pa->a), tok->rhs);
         pt1->p = pred_join(pt1->p, pa->p);
     }
@@ -2915,15 +2916,15 @@ static pred * ti_expl_from_token( class_env *ce, assump *as, token *tok ) {
     return NULL;
 }
 
-static pred_assump * ti_bindgroups( class_env *ce, assump *as, program *prog ) {
+static pred_assump * ti_bindgroups( class_env *ce, assump *as, token *tree ) {
     pred_assump *impl, *impls;
     pred *qs;
     assump *as2, *as3;
     token *t;
     /* First we need to generate assumptions from our explicit binds */
     as2 = NULL;
-    if( prog->expl ) {
-        for( t = prog->expl->lhs; t; t = t->next ) {
+    if( tree->rhs ) {
+        for( t = tree->rhs->lhs; t; t = t->next ) {
             as2 = assump_join(as2, bind_to_assump(t));
         }
     }
@@ -2931,7 +2932,14 @@ static pred_assump * ti_bindgroups( class_env *ce, assump *as, program *prog ) {
        each of the bind groups in the implicit group, building up assumptions
        as we go. */
     impls = new_pred_assump(NULL, assump_join(as2, as));
-    for( t = prog->impl; t; t = t->next ) {
+    /* No explicit groups */
+    if( tree->lhs ) {
+        t = tree;
+    }
+    else {
+        t = tree->next;
+    }
+    for( ; t; t = t->next ) {
         impl = ti_impls(ce, impls->a, t->lhs);
         impls->p = pred_join(impls->p, impl->p);
         impls->a = assump_join(impls->a, impl->a);
@@ -2940,8 +2948,9 @@ static pred_assump * ti_bindgroups( class_env *ce, assump *as, program *prog ) {
        group to make sure they are typed correctly. */
     as3 = assump_join(impls->a, assump_join(as2, as));
     qs = NULL;
-    if( prog->expl ) {
-        for( t = prog->expl->lhs; t; t = t->next ) {
+    /* Explicit binds exist */
+    if( tree->rhs ) {
+        for( t = tree->rhs->lhs; t; t = t->next ) {
             qs = pred_join(qs, ti_expl_from_token(ce, as3, t));
         }
     }
@@ -2964,7 +2973,7 @@ tiProgram ce as bgs = runTI $
 static assump * ti_program( class_env *ce, assump *as, program *prog ) {
     pred_assump *ps_as;
     /*pred *rs; * Note: unused */
-    ps_as = ti_bindgroups(ce, as, prog);
+    ps_as = ti_bindgroups(ce, as, prog->tree);
     /*rs = reduce(ce, apply_pred(curr_subst, ps_as->p)); * Note: unused */
     return apply_assump(curr_subst, ps_as->a);
 }
@@ -3094,6 +3103,15 @@ static typed_token * assign_types( token *tok, assump *as ) {
             }
             bs = bs->next;
         }
+        bs = bgs->rhs;
+        while( bs && bs->type == tok_Bind ) {
+            s = find(bs->value.s, as);
+            if( s ) {
+                curr->next = add_type_to_token(bs, s);
+                curr = curr->next;
+            }
+            bs = bs->next;
+        }
         bgs = bgs->next;
     }
     /* Remove dummy head */
@@ -3103,18 +3121,8 @@ static typed_token * assign_types( token *tok, assump *as ) {
 }
 
 static typed_token * reconstruct_types( program *prog, assump *as ) {
-    typed_token *result, *curr;
-    result = assign_types(prog->expl, as);
-    curr = result;
-    if( curr ) {
-        while( curr->next ) {
-            curr = curr->next;
-        }
-        curr->next = assign_types(prog->impl, as);
-    }
-    else {
-        result = assign_types(prog->impl, as);
-    }
+    typed_token *result;
+    result = assign_types(prog->tree, as);
     return result;
 }
 
