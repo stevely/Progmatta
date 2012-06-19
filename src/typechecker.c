@@ -61,12 +61,16 @@ static kind * kfun( kind *k1, kind *k2 ) {
     return result;
 }
 
+/* Sharing is caring */
+static kind * _kstar = NULL;
+
 static kind * kstar() {
-    kind *result;
-    result = (kind*)GC_MALLOC(sizeof(kind));
-    result->l = NULL;
-    result->r = NULL;
-    return result;
+    if( !_kstar ) {
+        _kstar = (kind*)GC_MALLOC(sizeof(kind));
+        _kstar->l = NULL;
+        _kstar->r = NULL;
+    }
+    return _kstar;
 }
 
 static void print_kind( kind *k ) {
@@ -307,16 +311,21 @@ static type * tMaybe;
 static type * tArrow;
 static type * tTuple2;
 
+static type **type_list;
+static int type_list_size;
+
 static void generate_prelude_types() {
-    tUnit  = tycon("()",    kstar());
-    tChar  = tycon("Char",  kstar());
-    tInt   = tycon("Int",   kstar());
-    tFloat = tycon("Float", kstar());
-    tString = tycon("String", kstar());
-    tList = tycon("[]", kfun( kstar(), kstar()));
-    tMaybe = tycon("Maybe", kfun( kstar(), kstar()));
-    tArrow = tycon("(->)", kfun( kstar(), kfun( kstar(), kstar())));
-    tTuple2 = tycon("(,)", kfun( kstar(), kfun( kstar(), kstar())));
+    type_list = (type**)malloc(sizeof(type*) * 15); /* Why 15? Why not? */
+    type_list[0] = tUnit  = tycon("()",    kstar());
+    type_list[1] = tChar  = tycon("Char",  kstar());
+    type_list[2] = tInt   = tycon("Int",   kstar());
+    type_list[3] = tFloat = tycon("Float", kstar());
+    type_list[4] = tString = tycon("String", kstar());
+    type_list[5] = tList = tycon("List", kfun( kstar(), kstar()));
+    type_list[6] = tMaybe = tycon("Maybe", kfun( kstar(), kstar()));
+    type_list[7] = tArrow = tycon("(->)", kfun( kstar(), kfun( kstar(), kstar())));
+    type_list[8] = tTuple2 = tycon("(,)", kfun( kstar(), kfun( kstar(), kstar())));
+    type_list_size = 9;
 }
 
 /* Skipping these so I don't go crazy
@@ -2751,7 +2760,7 @@ static pred_assump * ti_impls( class_env *ce, assump *as, token *tok ) {
     while( tok2 ) {
         if( tok2->type != tok_Bind ) {
             fprintf(stderr, "ERROR: ti_impls found token that's not a bind!\n");
-            return NULL;
+            return new_pred_assump(NULL, NULL);;
         }
         /* Generate a new type var */
         if( ts_end ) {
@@ -2837,30 +2846,52 @@ tiSeq ti ce as (bs:bss) = do (ps,as')  <- ti ce as bs
 /*
  * Generate a type from a type signature.
  */
-static type * get_type_sig2( token *tok ) {
+static type * get_type_from_ident( char *s ) {
+    int i;
+    for( i = 0; i < type_list_size; i++ ) {
+        if( id_eq(s, type_list[i]->val.tc->i) ) {
+            return type_list[i];
+        }
+    }
+    fprintf(stderr, "ERROR: Unknown type: \"%s\"!\n", s);
+    return NULL;
+}
+
+static type * get_type_sig4( token *tok ) {
+    if( !tok ) {
+        fprintf(stderr, "ERROR: Expected type identifier, got nothing!\n");
+        return NULL;
+    }
+    if( tok->type != tok_ident ) {
+        fprintf(stderr, "ERROR: Expected type identifier on line %d!\n",
+            tok->line_number);
+        return NULL;
+    }
+    /* Check for type variable */
+    if( *(tok->value.s) >= 'a' && *(tok->value.s) <= 'z' ) {
+        /* TODO: This isn't safe */
+        return tygen(*(tok->value.s) - 'a');
+    }
+    return get_type_from_ident(tok->value.s);
+}
+
+static type * get_type_sig3( token *tok ) {
+    type *t;
     if( tok->type == tok_ident ) {
-        if( id_eq(tok->value.s, "()") ) {
-            return tUnit;
-        }
-        else if( id_eq(tok->value.s, "Char") ) {
-            return tChar;
-        }
-        else if( id_eq(tok->value.s, "Int") ) {
-            return tInt;
-        }
-        else if( id_eq(tok->value.s, "Float") ) {
-            return tFloat;
-        }
-        else if( id_eq(tok->value.s, "String") ) {
-            return tString;
+        t = get_type_sig4(tok);
+        if( tok->next &&
+            (tok->next->type == tok_ident || tok->next->type == tok_parens) ) {
+            return tyap(t, get_type_sig3(tok->next));
         }
         else {
-            fprintf(stderr, "ERROR: Don't recognize the given type!\n");
-            return NULL;
+            return t;
         }
     }
     else if( tok->type == tok_funtype ) {
-        return tyap_fn( get_type_sig2(tok->lhs), get_type_sig2(tok->rhs) );
+        return tyap_fn( get_type_sig3(tok->lhs), get_type_sig3(tok->rhs) );
+    }
+    else if( tok->type == tok_parens ) {
+        return get_type_sig3(tok->lhs);
     }
     else {
         fprintf(stderr, "ERROR: Don't know how to handle the given type!\n");
@@ -2868,7 +2899,29 @@ static type * get_type_sig2( token *tok ) {
     }
 }
 
-static type * get_type_sig( token *tok ) {
+static pred * get_pred( token *tok ) {
+    /* TODO: This isn't safe */
+    return is_in(tok->lhs->value.s, tygen(*(tok->rhs->value.s) - 'a'));
+}
+
+static qual * get_type_sig2( token *tok ) {
+    qual *result;
+    result = qualified_type(NULL, NULL);
+    while( tok->type == tok_pred ) {
+        result->p = pred_join(get_pred(tok), result->p);
+        tok = tok->next;
+    }
+    if( tok ) {
+        result->val.t = get_type_sig3(tok);
+    }
+    return result;
+}
+
+static assump * get_type_sig( token *tok ) {
+    qual *q;
+    pred *p;
+    kind_list *ks;
+    scheme *s;
     if( !tok || (tok->type != tok_Typesig && tok->type != tok_Kernel) ) {
         fprintf(stderr, "ERROR: get_type_sig didn't receive type signature! ");
         if( !tok ) {
@@ -2881,23 +2934,40 @@ static type * get_type_sig( token *tok ) {
         }
         return NULL;
     }
-    return get_type_sig2(tok->rhs);
+    q = get_type_sig2(tok->rhs);
+    if( !q ) {
+        return NULL;
+    }
+    /* Have to grab the kinds from the tygens */
+    s = forall(NULL, q);
+    ks = NULL;
+    for( p = q->p; p; p = p->next ) {
+        /* TODO: This is incorrect in cases where a TyGen has multiple preds */
+        if( ks == NULL ) {
+            s->ks = ks = new_kind_list(kstar());
+        }
+        else {
+            ks->next = new_kind_list(kstar());
+        }
+    }
+    return new_assump(tok->lhs->value.s, s);
 }
 
 /*
  * We need a method to generate assumptions from explicit binds.
  */
 static assump * bind_to_assump( token *tok ) {
-    type *t;
-    if( !tok || tok->type != tok_Bind ) {
-        fprintf(stderr, "ERROR: bind_to_assump didn't receive a bind! ");
-        fprintf(stderr, "Received: ");
-        printtok(tok);
-        fprintf(stderr, "\n");
+    assump *result;
+    if( !tok ) {
+        fprintf(stderr, "ERROR: bind_to_assump received null token!\n");
         return NULL;
     }
-    t = get_type_sig(tok->lhs);
-    return new_assump(tok->value.s, forall(NULL, qualified_type(NULL, t)));
+    result = NULL;
+    while( tok ) {
+        result = assump_join(result, get_type_sig(tok->lhs));
+        tok = tok->next;
+    }
+    return result;
 }
 
 /*
@@ -2924,7 +2994,7 @@ static pred_assump * ti_bindgroups( class_env *ce, assump *as, token *tree ) {
     /* First we need to generate assumptions from our explicit binds */
     as2 = NULL;
     if( tree->rhs ) {
-        for( t = tree->rhs->lhs; t; t = t->next ) {
+        for( t = tree->rhs; t; t = t->next ) {
             as2 = assump_join(as2, bind_to_assump(t));
         }
     }
@@ -2950,7 +3020,7 @@ static pred_assump * ti_bindgroups( class_env *ce, assump *as, token *tree ) {
     qs = NULL;
     /* Explicit binds exist */
     if( tree->rhs ) {
-        for( t = tree->rhs->lhs; t; t = t->next ) {
+        for( t = tree->rhs; t; t = t->next ) {
             qs = pred_join(qs, ti_expl_from_token(ce, as3, t));
         }
     }

@@ -183,20 +183,17 @@ static token * generate_tree_from_table( sym_table *tbl ) {
             t2 = t2->next;
         }
     }
-    else if( t2 && t2->rhs ) {
-        t2 = t2->next;
-    }
     /* Found an explicit bind group */
     if( tree && tree->rhs ) {
-        t3 = tree;
+        t3 = tree->rhs;
         /* Find remaining explicit bind groups */
-        while( t2 ) {
-            if( t2->rhs ) {
-                t3->next = t2->rhs;
+        while( t2->next ) {
+            if( t2->next->rhs ) {
+                t3->next = t2->next->rhs;
                 t3 = t3->next;
                 /* Have to free the merged bind group */
-                temp = t2;
-                t2 = t2->next;
+                temp = t2->next;
+                t2->next = temp->next;
                 free(temp);
             }
             else {

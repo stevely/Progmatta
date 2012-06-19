@@ -20,7 +20,7 @@ static int is_list( type *t ) {
     if( t->type != type_con ) {
         return 0;
     }
-    return strcmp(t->val.tc->i, "[]") == 0;
+    return strcmp(t->val.tc->i, "List") == 0;
 }
 
 void pretty_print_type( type *t ) {
@@ -68,83 +68,83 @@ void pretty_print_type( type *t ) {
 
 void pretty_print_pred( pred *p ) {
     while( p ) {
+        printf("%s ", p->i);
         pretty_print_type(p->t);
-        printf(" => %s", p->i);
         if( p->next ) {
             printf(", ");
         }
         p = p->next;
     }
+    printf(" => ");
 }
 
 void pretty_print_scheme( scheme *s ) {
     qual *q;
     q = s->q;
     if( q->p ) {
-        printf("(");
         pretty_print_pred(q->p);
-        printf(") ");
     }
     pretty_print_type(q->val.t);
 }
 
-void pretty_print_tree( typed_token *tok ) {
+static void pretty_print_tree2( typed_token *tok, int indent ) {
+    int i;
     if( !tok ) {
         return;
     }
     switch( tok->type ) {
     case tok_Assign:
-        pretty_print_tree(tok->lhs);
+        pretty_print_tree2(tok->lhs, indent);
         printf(" = ");
-        pretty_print_tree(tok->rhs);
+        pretty_print_tree2(tok->rhs, indent);
         printf("\n");
         break;
     case tok_Bind:
         printf("%s :: ", tok->value.s);
         pretty_print_scheme(tok->scheme);
         printf("\n");
-        pretty_print_tree(tok->lhs);
+        pretty_print_tree2(tok->lhs, indent);
         printf("\n");
         break;
     case tok_brackets:
         printf("[");
-        pretty_print_tree(tok->lhs);
+        pretty_print_tree2(tok->lhs, indent);
         printf("]");
         break;
     case tok_parens:
         printf("(");
-        pretty_print_tree(tok->lhs);
+        pretty_print_tree2(tok->lhs, indent);
         printf(")");
         break;
     case tok_letexpr:
         printf("let ");
-        pretty_print_tree(tok->lhs);
+        pretty_print_tree2(tok->lhs, indent);
         printf(" in ");
-        pretty_print_tree(tok->rhs);
+        pretty_print_tree2(tok->rhs, indent);
         break;
     case tok_caseexpr:
         printf("case ");
-        pretty_print_tree(tok->lhs);
+        pretty_print_tree2(tok->lhs, indent);
         printf(" of\n");
-        pretty_print_tree(tok->rhs);
+        pretty_print_tree2(tok->rhs, indent);
         break;
     case tok_case:
-        pretty_print_tree(tok->lhs);
+        pretty_print_tree2(tok->lhs, indent);
         printf(" -> ");
-        pretty_print_tree(tok->rhs);
+        pretty_print_tree2(tok->rhs, indent);
         printf("\n");
         break;
     case tok_Typesig:
         printf("--");
-        pretty_print_tree(tok->lhs);
+        pretty_print_tree2(tok->lhs, indent);
         printf(" :: ");
-        pretty_print_tree(tok->rhs);
+        pretty_print_tree2(tok->rhs, indent);
         printf("\n");
         break;
     case tok_funtype:
-        pretty_print_tree(tok->lhs);
+        pretty_print_tree2(tok->lhs, indent);
         printf(" -> ");
-        pretty_print_tree(tok->rhs);
+        pretty_print_tree2(tok->rhs, indent);
         break;
     case tok_ident:
         printf("%s", tok->value.s);
@@ -158,14 +158,29 @@ void pretty_print_tree( typed_token *tok ) {
     case tok_string:
         printf("\"%s\"", tok->value.s);
         break;
+    /*
+    case tok_Bindgroup:
+        pretty_print_tree2(tok->lhs, indent+4);
+        break;
+        */
     default:
         printf("<?>");
         break;
     }
     if( tok->next ) {
-        if( tok->type != tok_Assign && tok->type != tok_Typesig && tok->type != tok_Bind ) {
+        if( tok->type != tok_Assign && tok->type != tok_Typesig
+         && tok->type != tok_Bind   && tok->type != tok_case ) {
             printf(" ");
         }
-        pretty_print_tree(tok->next);
+        else {
+            for( i = 0; i < indent; i++ ) {
+                printf(" ");
+            }
+        }
+        pretty_print_tree2(tok->next, indent);
     }
+}
+
+void pretty_print_tree( typed_token *tok ) {
+    pretty_print_tree2(tok, 0);
 }

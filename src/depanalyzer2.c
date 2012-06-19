@@ -402,7 +402,16 @@ program * perform_dependency_analysis( program *prog ) {
     deps = generate_dependency_list(prog);
     printdeplist(deps); /* For debugging purposes */
     /* Step 2: Perform the dependency analysis */
-    prog->tree = perform_dep_analysis(deps);
+    if( prog->tree ) {
+        /* No explicit binds */
+        if( prog->tree->lhs ) {
+            prog->tree = perform_dep_analysis(deps);
+        }
+        /* Explicit binds exist */
+        else {
+            prog->tree->next = perform_dep_analysis(deps);
+        }
+    }
     /* Step 3: Free dependency lists */
     free_dep_list(deps);
     return prog;

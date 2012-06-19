@@ -14,8 +14,8 @@ FCL_T= compiler-test
 FCL_T_S= test.c
 
 # Compiler sources
-FCL_S= lexer.c tokenizer.c parsecomb.c debruijn.c bindgroup.c depanalyzer2.c \
- typechecker.c prettyprint.c transform.c
+FCL_S= lexer.c tokenizer.c parsecomb.c debruijn.c desugarer.c bindgroup.c \
+ depanalyzer2.c typechecker.c prettyprint.c transform.c
 
 old_FCL_S= lexer.c tokenizer.c parsecomb.c debruijn.c depanalyzer.c typechecker.c \
  prettyprint.c transform.c
@@ -29,14 +29,14 @@ ARTIFACTS= $(wildcard $(call getobjs, $(FCL_T_S) $(FCL_S)) $(FCL_T))
 all: $(FCL_T)
 
 $(FCL_T): $(call getobjs, $(FCL_T_S) $(FCL_S))
-	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
+	$(CC) $(CFLAGS) $(LFLAGS) -o $@ $^ $(LIBS)
 
 $(BUILD):
 	mkdir $(BUILD)
 
 $(BUILD)/%.o: $(SRC)/%.c | $(BUILD)
 	$(ANALYZE) $(WARNS) $<
-	$(CC) $(CFLAGS) $(LFLAGS) -I $(SRC) -c -o $@ $<
+	$(CC) $(CFLAGS) -I $(SRC) -c -o $@ $<
 
 clean:
 	$(if $(ARTIFACTS), rm $(ARTIFACTS))

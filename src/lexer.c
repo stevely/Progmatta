@@ -483,7 +483,7 @@ lex_list * filter_extra_newlines( lex_list *lexes ) {
         free(l);
     }
     /* Three or more newlines in a row */
-    l = list;
+    l = lexes;
     while( l ) {
         if( l->type == lex_newline ) {
             if( l->next && l->next->type == lex_newline ) {

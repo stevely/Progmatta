@@ -197,6 +197,8 @@ static void add_fake_prelude() {
     insert_into_enviro("toPtr", 1);
     insert_into_enviro("mapK", 1);
     insert_into_enviro("toArray", 1);
+    insert_into_enviro("plus", 1);
+    insert_into_enviro("Cons", 1);
 }
 
 token * generate_debruijns( token *tree ) {

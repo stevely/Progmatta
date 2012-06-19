@@ -7,6 +7,7 @@
 #include "lexer.h"
 #include "tokenizer.h"
 #include "parsecomb.h"
+#include "desugarer.h"
 
 typedef struct output {
     lex_list *l;
@@ -847,7 +848,7 @@ token * parse( lex_list *l ) {
             result = o->tok;
             free_output();
             free_tokens(result);
-            return result;
+            return desugar_tree(result);
         }
         else {
             printf("Parse error on line %d.\n", o->l->line_number);

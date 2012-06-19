@@ -48,6 +48,7 @@ enum tokens {
     tok_otherwise,
     tok_parens,
     tok_period,
+    tok_pred,
     tok_rbracket,
     tok_rparen,
     tok_string,
