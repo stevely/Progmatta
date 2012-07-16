@@ -88,7 +88,6 @@ void pretty_print_scheme( scheme *s ) {
 }
 
 static void pretty_print_tree2( typed_token *tok, int indent ) {
-    int i;
     if( !tok ) {
         return;
     }
@@ -100,11 +99,15 @@ static void pretty_print_tree2( typed_token *tok, int indent ) {
         printf("\n");
         break;
     case tok_Bind:
-        printf("%s :: ", tok->value.s);
-        pretty_print_scheme(tok->scheme);
-        printf("\n");
+        if( tok->scheme ) {
+            printf("%s :: ", tok->value.s);
+            pretty_print_scheme(tok->scheme);
+            printf("\n");
+        }
         pretty_print_tree2(tok->lhs, indent);
-        printf("\n");
+        if( indent == 0 ) {
+            printf("\n");
+        }
         break;
     case tok_brackets:
         printf("[");
@@ -158,11 +161,9 @@ static void pretty_print_tree2( typed_token *tok, int indent ) {
     case tok_string:
         printf("\"%s\"", tok->value.s);
         break;
-    /*
     case tok_Bindgroup:
         pretty_print_tree2(tok->lhs, indent+4);
         break;
-        */
     default:
         printf("<?>");
         break;
@@ -171,11 +172,6 @@ static void pretty_print_tree2( typed_token *tok, int indent ) {
         if( tok->type != tok_Assign && tok->type != tok_Typesig
          && tok->type != tok_Bind   && tok->type != tok_case ) {
             printf(" ");
-        }
-        else {
-            for( i = 0; i < indent; i++ ) {
-                printf(" ");
-            }
         }
         pretty_print_tree2(tok->next, indent);
     }

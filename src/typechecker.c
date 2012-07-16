@@ -145,6 +145,10 @@ static int type_eq( type *t1, type *t2 ) {
 }
 
 static void print_type( type *t ) {
+    if( !t ) {
+        printf("<null>");
+        return;
+    }
     switch( t->type ) {
     case type_var:
         printf("Tyvar %s: ", t->val.tv->i);
@@ -769,7 +773,10 @@ instance (Unify t, Types t) => Unify [t] where
 
 static subst * mgu_single( type *t1, type *t2 ) {
     subst *s1, *s2;
-    if( (t1->type == type_ap) && (t2->type == type_ap) ) {
+    if( !t1 || !t2 ) {
+        /* Catch to fall through */
+    }
+    else if( (t1->type == type_ap) && (t2->type == type_ap) ) {
         s1 = mgu_single(t1->val.ta->l, t2->val.ta->l);
         s2 = mgu_single(apply(s1, t1->val.ta->r), apply(s1, t2->val.ta->r));
         return comp_apply(s2, s1);
@@ -926,7 +933,7 @@ static int preds_eq( pred *p1, pred *p2 ) {
         return 0;
     }
     else {
-        return pred_eq(p1, p2) && pred_eq(p1->next, p2->next);
+        return pred_eq(p1, p2) && preds_eq(p1->next, p2->next);
     }
 }
 
@@ -1929,14 +1936,14 @@ static type * inst_types( type *ts, type *t ) {
     else if( t->type == type_gen ) {
         i = 0;
         ts2 = ts;
-        while( i != t->val.tg ) {
+        while( ts2 && i != t->val.tg ) {
             i++;
-            if( !ts2 ) {
-                fprintf(stderr,
-                    "ERROR: Failed to look up TGen in inst_types\n");
-                return NULL;
-            }
             ts2 = ts2->next;
+        }
+        if( !ts2 ) {
+            fprintf(stderr,
+                "ERROR: Failed to look up TGen in inst_types\n");
+            return NULL;
         }
         result = ts2;
     }
@@ -2649,9 +2656,9 @@ static pred * ti_expl( class_env *ce, assump *as, scheme *sc, token *tok ) {
     ps2 = filter_by_entail(ce, q2, apply_pred(curr_subst, ps));
     ds_rs = split(ce, fs, gs, ps2);
     if( !scheme_eq(sc, sc2) ) {
-        fprintf(stderr, "ERROR: signature too general: ");
+        fprintf(stderr, "ERROR: signature too general:\n");
         print_scheme(sc);
-        printf(", ");
+        printf("\n");
         print_scheme(sc2);
         printf("\n");
         return NULL;
@@ -2846,6 +2853,50 @@ tiSeq ti ce as (bs:bss) = do (ps,as')  <- ti ce as bs
 /*
  * Generate a type from a type signature.
  */
+
+typedef struct tyvar_gen_map {
+    char *id;
+    int gen;
+    struct tyvar_gen_map *next;
+} tyvar_gen_map;
+
+static int get_gen_from_var( tyvar_gen_map *map, char *s ) {
+    if( !map ) {
+        fprintf(stderr, "ERROR: get_gen_from_var received null map!\n");
+        return -1;
+    }
+    while( map ) {
+        if( id_eq(map->id, s) ) {
+            return map->gen;
+        }
+        else if( !map->next ) {
+            map->next = (tyvar_gen_map*)GC_MALLOC(sizeof(tyvar_gen_map));
+            map->next->id = s;
+            map->next->gen = map->gen + 1;
+            map->next->next = NULL;
+            return map->next->gen;
+        }
+        else {
+            map = map->next;
+        }
+    }
+    fprintf(stderr, "ERROR: get_gen_from_var reached impossible condition!\n");
+    return -1;
+}
+
+static int lookup_gen_from_var( tyvar_gen_map *map, char *s ) {
+    while( map ) {
+        if( id_eq(map->id, s) ) {
+            return map->gen;
+        }
+        else {
+            map = map->next;
+        }
+    }
+    fprintf(stderr, "ERROR: Lookup failed in get_gen_from_var!\n");
+    return -1;
+}
+
 static type * get_type_from_ident( char *s ) {
     int i;
     for( i = 0; i < type_list_size; i++ ) {
@@ -2857,7 +2908,7 @@ static type * get_type_from_ident( char *s ) {
     return NULL;
 }
 
-static type * get_type_sig4( token *tok ) {
+static type * get_type_sig4( token *tok, tyvar_gen_map *map ) {
     if( !tok ) {
         fprintf(stderr, "ERROR: Expected type identifier, got nothing!\n");
         return NULL;
@@ -2869,29 +2920,28 @@ static type * get_type_sig4( token *tok ) {
     }
     /* Check for type variable */
     if( *(tok->value.s) >= 'a' && *(tok->value.s) <= 'z' ) {
-        /* TODO: This isn't safe */
-        return tygen(*(tok->value.s) - 'a');
+        return tygen(get_gen_from_var(map, tok->value.s));
     }
     return get_type_from_ident(tok->value.s);
 }
 
-static type * get_type_sig3( token *tok ) {
+static type * get_type_sig3( token *tok, tyvar_gen_map *map ) {
     type *t;
     if( tok->type == tok_ident ) {
-        t = get_type_sig4(tok);
+        t = get_type_sig4(tok, map);
         if( tok->next &&
             (tok->next->type == tok_ident || tok->next->type == tok_parens) ) {
-            return tyap(t, get_type_sig3(tok->next));
+            return tyap(t, get_type_sig3(tok->next, map));
         }
         else {
             return t;
         }
     }
     else if( tok->type == tok_funtype ) {
-        return tyap_fn( get_type_sig3(tok->lhs), get_type_sig3(tok->rhs) );
+        return tyap_fn( get_type_sig3(tok->lhs, map), get_type_sig3(tok->rhs, map) );
     }
     else if( tok->type == tok_parens ) {
-        return get_type_sig3(tok->lhs);
+        return get_type_sig3(tok->lhs, map);
     }
     else {
         fprintf(stderr, "ERROR: Don't know how to handle the given type!\n");
@@ -2899,14 +2949,29 @@ static type * get_type_sig3( token *tok ) {
     }
 }
 
-static pred * get_pred( token *tok ) {
-    /* TODO: This isn't safe */
-    return is_in(tok->lhs->value.s, tygen(*(tok->rhs->value.s) - 'a'));
+static pred * get_pred( token *tok, tyvar_gen_map *map ) {
+    pred *result;
+    if( !tok ) {
+        return NULL;
+    }
+    result = is_in(tok->lhs->value.s, tygen(
+        lookup_gen_from_var(map, tok->lhs->next->value.s)));
+    result->next = get_pred(tok->rhs, map);
+    return result;
 }
 
-static qual * get_type_sig2( token *tok ) {
+static qual * get_type_sig2( token *tok, tyvar_gen_map *map ) {
     qual *result;
     result = qualified_type(NULL, NULL);
+    /* Check if we need to generate predicates from constraints */
+    if( tok->type == tok_Typestmt ) {
+        result->val.t = get_type_sig3(tok->rhs, map);
+        result->p = get_pred(tok->lhs, map);
+    }
+    else {
+        result->val.t = get_type_sig3(tok, map);
+    }
+    /*
     while( tok->type == tok_pred ) {
         result->p = pred_join(get_pred(tok), result->p);
         tok = tok->next;
@@ -2914,14 +2979,15 @@ static qual * get_type_sig2( token *tok ) {
     if( tok ) {
         result->val.t = get_type_sig3(tok);
     }
+    */
     return result;
 }
 
 static assump * get_type_sig( token *tok ) {
     qual *q;
-    pred *p;
     kind_list *ks;
     scheme *s;
+    tyvar_gen_map map, *m;
     if( !tok || (tok->type != tok_Typesig && tok->type != tok_Kernel) ) {
         fprintf(stderr, "ERROR: get_type_sig didn't receive type signature! ");
         if( !tok ) {
@@ -2934,20 +3000,24 @@ static assump * get_type_sig( token *tok ) {
         }
         return NULL;
     }
-    q = get_type_sig2(tok->rhs);
+    /* Dummy map value to simplify insertion logic */
+    map.gen = -1;
+    map.id = "";
+    map.next = NULL;
+    q = get_type_sig2(tok->rhs, &map);
     if( !q ) {
         return NULL;
     }
     /* Have to grab the kinds from the tygens */
     s = forall(NULL, q);
     ks = NULL;
-    for( p = q->p; p; p = p->next ) {
-        /* TODO: This is incorrect in cases where a TyGen has multiple preds */
+    for( m = map.next; m; m = m->next ) {
         if( ks == NULL ) {
             s->ks = ks = new_kind_list(kstar());
         }
         else {
             ks->next = new_kind_list(kstar());
+            ks = ks->next;
         }
     }
     return new_assump(tok->lhs->value.s, s);

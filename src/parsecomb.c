@@ -56,6 +56,7 @@ void printtok( token *tok ) {
     case tok_Bindgroup: printf("Bindgroup"); break;
     case tok_Case: printf("Case"); break;
     case tok_Cases: printf("Cases"); break;
+    case tok_Constraint: printf("Constraint"); break;
     case tok_Export: printf("Export"); break;
     case tok_Identlist: printf("Identlist"); break;
     case tok_Import: printf("Import"); break;
@@ -63,11 +64,14 @@ void printtok( token *tok ) {
     case tok_Moreports: printf("Moreports"); break;
     case tok_PortStmt: printf("PortStmt"); break;
     case tok_Typesig: printf("Typesig"); break;
+    case tok_Typestmt: printf("Typestmt"); break;
     case tok_arrow: printf("arrow"); break;
     case tok_brackets: printf("brackets"); break;
     case tok_case: printf("case"); break;
     case tok_caseexpr: printf("caseexpr"); break;
+    case tok_comma: printf("comma"); break;
     case tok_dubcolon: printf("dubcolon"); break;
+    case tok_dubarrow: printf("dubarrow"); break;
     case tok_eq: printf("eq"); break;
     case tok_export: printf("export"); break;
     case tok_funtype: printf("funtype"); break;
@@ -356,6 +360,8 @@ output * new_token_with_next( enum tokens tok, lex_list *l, output *h, output *t
 }
 
 SimpleParser(arrow);
+SimpleParser(dubarrow);
+SimpleParser(comma);
 SimpleParser(eq);
 SimpleParser(export);
 SimpleParser(ident);
@@ -441,6 +447,8 @@ Parser(Vals);
 Parser(Valslist);
 Parser(Cases);
 Parser(Case);
+Parser(Typestmt);
+Parser(Constraint);
 
 /*
  * start: Toplevel
@@ -547,10 +555,10 @@ Parser(Assigns) {
 }
 
 /*
- * Typesig: ident dubcolon Type newline
+ * Typesig: ident dubcolon Typestmt newline
  */
 Parser(Typesig) {
-    output *o = bind( ident, dubcolon, Type, newline );
+    output *o = bind( ident, dubcolon, Typestmt, newline );
     if( o ) {
         return new_token_with_lrhs(tok_Typesig, l, o, o->pnext->pnext, o->l);
     }
@@ -634,6 +642,49 @@ Parser(Moreports) {
         else {
             return new_token_with_next(tok_Moreports, l, o->pnext, o->pnext->pnext,
                                        o->l);
+        }
+    }
+    else {
+        return NULL;
+    }
+}
+
+/*
+ * Typestmt: Constraint dubarrow Type
+ *         | Type
+ */
+Parser(Typestmt) {
+    output *o;
+       o = bind( Constraint, dubarrow, Type );
+    or o = bind( Type );
+    if( o ) {
+        if( o->type == tok_Constraint ) {
+            return new_token_with_lrhs(tok_Typestmt, l, o, o->pnext->pnext, o->l);
+        }
+        else {
+            return o;
+        }
+    }
+    else {
+        return NULL;
+    }
+}
+
+/*
+ * Constraint: Identlist comma Constraint
+ *           | Identlist
+ */
+Parser(Constraint) {
+    output *o;
+       o = bind( Identlist, comma, Identlist );
+    or o = bind( Identlist );
+    if( o ) {
+        /* Check for comma */
+        if( o->pnext ) {
+            return new_token_with_lrhs(tok_Constraint, l, o, o->pnext->pnext, o->l);
+        }
+        else {
+            return new_token_with_child(tok_Constraint, l, o, o->l);
         }
     }
     else {
